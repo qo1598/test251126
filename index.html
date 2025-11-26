@@ -1,0 +1,317 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>구구단 산성비 게임</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            background-color: #222;
+            color: white;
+            font-family: 'Malgun Gothic', sans-serif;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            overflow: hidden;
+        }
+
+        #game-container {
+            position: relative;
+            width: 600px;
+            height: 800px;
+            background-color: #000;
+            border: 4px solid #444;
+            box-shadow: 0 0 20px rgba(0, 255, 0, 0.2);
+        }
+
+        /* 상단 정보창 (점수, 생명) */
+        #info-bar {
+            display: flex;
+            justify-content: space-between;
+            padding: 15px;
+            font-size: 20px;
+            background-color: #111;
+            border-bottom: 2px solid #333;
+        }
+
+        .info-item span {
+            font-weight: bold;
+            color: #0f0; /* 해커 느낌의 초록색 */
+        }
+
+        /* 게임 화면 (캔버스) */
+        canvas {
+            display: block;
+            width: 100%;
+            height: 680px; /* 입력창 공간 제외 */
+        }
+
+        /* 하단 입력창 영역 */
+        #input-area {
+            position: absolute;
+            bottom: 0;
+            width: 100%;
+            height: 60px;
+            background-color: #222;
+            display: flex;
+            border-top: 2px solid #555;
+        }
+
+        #answer-input {
+            width: 100%;
+            height: 100%;
+            background: #000;
+            color: #0f0;
+            border: none;
+            font-size: 30px;
+            text-align: center;
+            outline: none;
+            font-weight: bold;
+        }
+
+        /* 게임 오버 / 시작 화면 오버레이 */
+        #overlay {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.85);
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            z-index: 10;
+        }
+
+        h1 { font-size: 40px; margin-bottom: 10px; color: #fff; }
+        p { font-size: 18px; color: #ccc; margin-bottom: 30px; }
+        
+        button {
+            padding: 15px 40px;
+            font-size: 24px;
+            background-color: #0f0;
+            color: #000;
+            border: none;
+            cursor: pointer;
+            font-weight: bold;
+            border-radius: 5px;
+        }
+        button:hover { background-color: #0c0; }
+
+        .hidden { display: none !important; }
+
+        /* 모바일 대응 */
+        @media (max-width: 650px) {
+            #game-container { width: 100%; height: 100vh; border: none; }
+            canvas { height: calc(100vh - 120px); }
+        }
+    </style>
+</head>
+<body>
+
+    <div id="game-container">
+        <!-- 정보창 -->
+        <div id="info-bar">
+            <div class="info-item">점수: <span id="score">0</span></div>
+            <div class="info-item">생명: <span id="lives">5</span></div>
+        </div>
+
+        <!-- 게임 캔버스 -->
+        <canvas id="gameCanvas"></canvas>
+
+        <!-- 입력창 -->
+        <div id="input-area">
+            <input type="number" id="answer-input" placeholder="정답 입력 후 엔터" autocomplete="off" inputmode="numeric">
+        </div>
+
+        <!-- 오버레이 (시작/게임오버) -->
+        <div id="overlay">
+            <h1 id="overlay-title">구구단 산성비</h1>
+            <p id="overlay-desc">내려오는 구구단의 정답을 입력하세요!</p>
+            <button id="start-btn" onclick="startGame()">게임 시작</button>
+        </div>
+    </div>
+
+    <script>
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        const scoreEl = document.getElementById('score');
+        const livesEl = document.getElementById('lives');
+        const inputEl = document.getElementById('answer-input');
+        const overlay = document.getElementById('overlay');
+        const titleEl = document.getElementById('overlay-title');
+        const descEl = document.getElementById('overlay-desc');
+        const btnEl = document.getElementById('start-btn');
+
+        // 캔버스 크기 설정 (레티나 디스플레이 등 고려하여 내부 픽셀 조정)
+        canvas.width = 600;
+        canvas.height = 680;
+
+        let gameLoop;
+        let spawnInterval;
+        let drops = [];
+        let score = 0;
+        let lives = 5;
+        let gameRunning = false;
+        let spawnRate = 1500; // 문제 생성 주기 (ms)
+        let fallSpeedBase = 1.0; // 기본 낙하 속도
+
+        class Drop {
+            constructor() {
+                this.a = Math.floor(Math.random() * 8) + 2; // 2~9단
+                this.b = Math.floor(Math.random() * 9) + 1; // 1~9
+                this.text = `${this.a} x ${this.b}`;
+                this.answer = (this.a * this.b).toString();
+                
+                // 텍스트 너비 측정하여 화면 밖으로 나가지 않게 x 좌표 설정
+                ctx.font = "30px Arial";
+                const textWidth = ctx.measureText(this.text).width;
+                this.x = Math.random() * (canvas.width - textWidth - 40) + 20;
+                
+                this.y = -30;
+                this.color = "#fff";
+                this.speed = fallSpeedBase + (Math.random() * 0.5); // 속도 약간 랜덤
+            }
+
+            draw() {
+                ctx.fillStyle = this.color;
+                ctx.font = "bold 30px Arial";
+                ctx.fillText(this.text, this.x, this.y);
+            }
+
+            update() {
+                this.y += this.speed;
+            }
+        }
+
+        function startGame() {
+            // 초기화
+            score = 0;
+            lives = 5;
+            drops = [];
+            spawnRate = 1500;
+            fallSpeedBase = 1.0;
+            gameRunning = true;
+            
+            updateUI();
+            overlay.classList.add('hidden');
+            inputEl.value = "";
+            inputEl.focus();
+
+            // 게임 루프 시작
+            if (gameLoop) cancelAnimationFrame(gameLoop);
+            if (spawnInterval) clearInterval(spawnInterval);
+            
+            spawnProblem();
+            loop();
+        }
+
+        function spawnProblem() {
+            if (!gameRunning) return;
+            drops.push(new Drop());
+            
+            // 난이도 조절: 점수가 오를수록 더 빨리 생성
+            clearInterval(spawnInterval);
+            let nextSpawn = Math.max(500, 1500 - (score * 5)); 
+            spawnInterval = setInterval(spawnProblem, nextSpawn);
+        }
+
+        function loop() {
+            if (!gameRunning) return;
+
+            ctx.clearRect(0, 0, canvas.width, canvas.height); // 화면 지우기
+
+            // 문제들 업데이트 및 그리기
+            for (let i = 0; i < drops.length; i++) {
+                let d = drops[i];
+                d.update();
+                d.draw();
+
+                // 바닥에 닿았을 때
+                if (d.y > canvas.height) {
+                    lives--;
+                    drops.splice(i, 1);
+                    i--;
+                    updateUI();
+                    
+                    // 화면 흔들림 효과 (심플하게 배경색 깜빡임)
+                    canvas.style.backgroundColor = "#300";
+                    setTimeout(() => canvas.style.backgroundColor = "#000", 100);
+
+                    if (lives <= 0) {
+                        gameOver();
+                    }
+                }
+            }
+
+            gameLoop = requestAnimationFrame(loop);
+        }
+
+        function checkAnswer() {
+            const userAnswer = inputEl.value.trim();
+            if (userAnswer === "") return;
+
+            let hit = false;
+            // 화면에 있는 문제 중 가장 아래에 있는(y값이 큰) 문제부터 확인
+            // (사용자가 같은 답을 입력했을 때 더 급한 문제를 먼저 없애기 위함)
+            drops.sort((a, b) => b.y - a.y);
+
+            for (let i = 0; i < drops.length; i++) {
+                if (drops[i].answer === userAnswer) {
+                    drops.splice(i, 1); // 문제 삭제
+                    score += 10;
+                    hit = true;
+                    
+                    // 점수에 따른 속도 증가
+                    if (score % 50 === 0) {
+                        fallSpeedBase += 0.2;
+                    }
+                    break; 
+                }
+            }
+
+            if (hit) {
+                inputEl.value = ""; // 정답이면 입력창 비우기
+                updateUI();
+            } else {
+                // 틀렸을 때 시각적 피드백 (입력창 빨간색)
+                inputEl.style.backgroundColor = "#300";
+                setTimeout(() => inputEl.style.backgroundColor = "#000", 200);
+            }
+        }
+
+        function updateUI() {
+            scoreEl.innerText = score;
+            livesEl.innerText = lives;
+        }
+
+        function gameOver() {
+            gameRunning = false;
+            cancelAnimationFrame(gameLoop);
+            clearInterval(spawnInterval);
+            
+            titleEl.innerText = "게임 오버!";
+            descEl.innerText = `최종 점수: ${score}점`;
+            btnEl.innerText = "다시 하기";
+            overlay.classList.remove('hidden');
+        }
+
+        // 키보드 입력 처리
+        inputEl.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') {
+                checkAnswer();
+            }
+        });
+
+        // 게임 화면 클릭 시 입력창으로 포커스 이동 (편의성)
+        canvas.addEventListener('click', () => {
+            if(gameRunning) inputEl.focus();
+        });
+
+    </script>
+</body>
+</html>
